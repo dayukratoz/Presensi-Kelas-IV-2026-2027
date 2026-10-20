@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>E-Presensi Kelas 4 - SDN 2 Pulosaren</title>
+    <!-- Tailwind CSS untuk Desain -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- HTML5 QR Code Scanner -->
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <!-- SweetAlert2 untuk Notifikasi -->
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @media print {
+            .no-print { display: none !important; }
+            .print-only { display: block !important; }
+            body { background-color: white; padding: 0; }
+            .print-container { width: 100%; border: none; box-shadow: none; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { border: 1px solid black !important; padding: 8px; font-size: 12px; }
+            .signature-area { display: flex; justify-content: space-between; margin-top: 40px; page-break-inside: avoid; }
+        }
+        .print-only { display: none; }
+        #reader video { border-radius: 0.5rem; object-fit: cover; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen">
+
+    <!-- Navbar (Tidak di-print) -->
+    <nav class="bg-gradient-to-r from-teal-600 to-sky-600 p-4 shadow-md no-print text-white flex justify-between items-center">
+        <div>
+            <h1 class="text-xl font-bold"><i class="fa-solid fa-fingerprint mr-2"></i>E-Presensi SD Negeri 2 Pulosaren</h1>
+            <p class="text-sm text-teal-100">Kelas 4 | Tahun Ajaran 2026/2027</p>
+        </div>
+        <div class="text-right">
+            <div id="realtime-clock" class="text-2xl font-bold font-mono">00:00:00</div>
+            <div id="realtime-date" class="text-xs">Tanggal</div>
+        </div>
+    </nav>
+
+    <div class="container mx-auto p-4 flex flex-col md:flex-row gap-6 mt-4">
+        
+        <!-- Panel Kiri: Scanner -->
+        <div class="w-full md:w-1/3 no-print">
+            <div class="bg-white rounded-xl shadow-md border border-slate-200 overflow-hidden">
+                <div class="bg-slate-100 p-3 border-b border-slate-200 font-bold text-slate-700">
+                    <i class="fa-solid fa-camera mr-2"></i> Kamera Scan QR
+                </div>
+                <div class="p-4">
+                    <div id="reader" class="w-full"></div>
+                    <div class="mt-4 text-center text-sm text-slate-500">
+                        Arahkan QR Code (NISN) ke kamera.
+                    </div>
+                </div>
+            </div>
+            
+            <div class="mt-4 flex gap-2">
+                <button onclick="tabSwitch('absen')" class="flex-1 bg-teal-600 hover:bg-teal-700 text-white py-2 rounded-lg font-semibold transition"><i class="fa-solid fa-qrcode mr-1"></i> Scan</button>
+                <button onclick="tabSwitch('rekap')" class="flex-1 bg-sky-600 hover:bg-sky-700 text-white py-2 rounded-lg font-semibold transition"><i class="fa-solid fa-table mr-1"></i> Rekapan</button>
+            </div>
+        </div>
+
+        <!-- Panel Kanan: Rekapan / Laporan -->
+        <div class="w-full md:w-2/3">
+            <div class="bg-white rounded-xl shadow-md border border-slate-200 p-6 print-container" id="rekap-panel">
+                
+                <div class="flex justify-between items-center mb-6 no-print">
+                    <h2 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-clipboard-list mr-2"></i> Rekapan Presensi Hari Ini</h2>
+                    <div class="flex gap-2">
+                        <button onclick="bersihkanData()" class="px-3 py-1.5 bg-red-100 text-red-600 hover:bg-red-200 rounded text-sm font-semibold transition"><i class="fa-solid fa-trash mr-1"></i> Reset Hari Ini</button>
+                        <button onclick="window.print()" class="px-3 py-1.5 bg-slate-800 text-white hover:bg-slate-700 rounded text-sm font-semibold transition"><i class="fa-solid fa-print mr-1"></i> Print Laporan</button>
+                    </div>
+                </div>
+
+                <!-- Header Print -->
+                <div class="print-only text-center mb-6">
+                    <h2 class="text-xl font-bold uppercase">Laporan Presensi Siswa</h2>
+                    <h3 class="text-lg font-semibold">SD Negeri 2 Pulosaren</h3>
+                    <p>Kelas: 4 | Tanggal: <span id="print-date"></span></p>
+                    <hr class="border-black mt-2">
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm text-left border-collapse">
+                        <thead class="bg-slate-100 text-slate-600 uppercase text-xs">
+                            <tr>
+                                <th class="border px-3 py-2 text-center">No</th>
+                                <th class="border px-3 py-2">Nama Peserta Didik</th>
+                                <th class="border px-3 py-2 text-center">Induk</th>
+                                <th class="border px-3 py-2 text-center">NISN</th>
+                                <th class="border px-3 py-2 text-center">Jam Scan</th>
+                                <th class="border px-3 py-2 text-center">Status</th>
+                                <th class="border px-3 py-2 text-center">Keterangan</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tabel-presensi">
+                            <!-- Data dimuat dari JS -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Area Tanda Tangan Print -->
+                <div class="print-only signature-area text-center mt-10 text-sm">
+                    <div class="w-1/3">
+                        <p class="mb-16">Mengetahui,<br>Kepala Sekolah</p>
+                        <p class="font-bold underline">MUHAMAD MAHIN, S.Pd.SD.</p>
+                        <p>NIP. 19830928 201406 1 002</p>
+                    </div>
+                    <div class="w-1/3">
+                        <p class="mb-16">Wonosobo, <span id="ttd-date"></span><br>Guru Kelas</p>
+                        <p class="font-bold underline">DAYU USMANTO, S.Pd.</p>
+                        <p>NIP. 19940821 201902 1 003</p>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const dbSiswa = [
+            { no: 1, induk: "1443", nisn: "3176387411", nama: "AGUNG PRAWIRA Y." },
+            { no: 2, induk: "1444", nisn: "3169066796", nama: "ARKA SURYA PUTRA" },
+            { no: 3, induk: "1445", nisn: "3171005933", nama: "ASKIA ULIN NAJWA" },
+            { no: 4, induk: "1446", nisn: "0166754464", nama: "DITA RAHMA DANI" },
+            { no: 5, induk: "1447", nisn: "3172196072", nama: "FARREL HAMIZAN" },
+            { no: 6, induk: "1448", nisn: "3169810248", nama: "FIKI PUJIYONO" },
+            { no: 7, induk: "1449", nisn: "3160320969", nama: "INTAN ADINDA PUTRI" },
+            { no: 8, induk: "1450", nisn: "3179965268", nama: "JEFRI SULISTIYO" },
+            { no: 9, induk: "1451", nisn: "3170135626", nama: "JONI AGUS FEBRIYAN" },
+            { no: 10, induk: "1452", nisn: "3165077126", nama: "LAILATUL MUASYIFAH" },
+            { no: 11, induk: "1453", nisn: "3167391801", nama: "LUD FANDI" },
+            { no: 12, induk: "1454", nisn: "3174188508", nama: "MUAZIS RIZKI B." },
+            { no: 13, induk: "1455", nisn: "3172029058", nama: "MUS FIROH RAEL V." },
+            { no: 14, induk: "1456", nisn: "3175714903", nama: "NADIRA AZMI FALISHA" },
+            { no: 15, induk: "1457", nisn: "3170035281", nama: "NITA AGUSTIN" },
+            { no: 16, induk: "1458", nisn: "3173345405", nama: "RADIT SETIAWAN" },
+            { no: 17, induk: "1459", nisn: "3164979798", nama: "RAYA FITRI" },
+            { no: 18, induk: "1460", nisn: "3162204467", nama: "REZA AFIF N." },
+            { no: 19, induk: "1461", nisn: "3163532609", nama: "RIZAL SAPUTRA" },
+            { no: 20, induk: "1462", nisn: "3175338132", nama: "SILO GUNAWAN" },
+            { no: 21, induk: "1463", nisn: "3162583390", nama: "SISKA PRILIANI" },
+            { no: 22, induk: "1464", nisn: "3161628974", nama: "SUSI INTAN NUR W." },
+            { no: 23, induk: "1465", nisn: "3168682934", nama: "ZAENAL ARIFIN" }
+        ];
+
+        let html5QrcodeScanner;
+        let isProcessing = false;
+
+        function updateClock() {
+            const now = new Date();
+            const timeString = now.toLocaleTimeString('id-ID', { hour12: false });
+            const dateString = now.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+            
+            document.getElementById('realtime-clock').innerText = timeString;
+            document.getElementById('realtime-date').innerText = dateString;
+            document.getElementById('print-date').innerText = dateString;
+            document.getElementById('ttd-date').innerText = now.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+
+        function getTodayDateStr() {
+            return new Date().toLocaleDateString('id-ID').replace(/\//g, '-');
+        }
+
+        function getPresensiData() {
+            const dateKey = getTodayDateStr();
+            const data = localStorage.getItem('presensi_' + dateKey);
+            return data ? JSON.parse(data) : [];
+        }
+
+        function savePresensiData(data) {
+            const dateKey = getTodayDateStr();
+            localStorage.setItem('presensi_' + dateKey, JSON.stringify(data));
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('tabel-presensi');
+            tbody.innerHTML = '';
+            const rekapanHariIni = getPresensiData();
+            
+            dbSiswa.forEach(siswa => {
+                const absenMasuk = rekapanHariIni.find(p => p.nisn === siswa.nisn && p.jenis === "Masuk");
+                const absenPulang = rekapanHariIni.find(p => p.nisn === siswa.nisn && p.jenis === "Pulang");
+                
+                let jamScan = "-";
+                let status = "-";
+                let keterangan = "-";
+                let rowClass = "";
+
+                if (absenMasuk || absenPulang) {
+                    const p = absenPulang || absenMasuk; 
+                    jamScan = p.waktu;
+                    status = p.jenis;
+                    let bgBadge = "bg-green-100 text-green-700";
+                    if(p.keterangan === "Terlambat" || p.keterangan === "Pulang Cepat") {
+                        bgBadge = "bg-red-100 text-red-700";
+                    }
+                    keterangan = `<span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${bgBadge}">${p.keterangan}</span>`;
+                    rowClass = "bg-white";
+                } else {
+                    rowClass = "bg-slate-50 opacity-50";
+                }
+
+                tbody.innerHTML += `
+                    <tr class="border-b ${rowClass} hover:bg-slate-100">
+                        <td class="border px-3 py-2 text-center">${siswa.no}</td>
+                        <td class="border px-3 py-2 font-semibold">${siswa.nama}</td>
+                        <td class="border px-3 py-2 text-center">${siswa.induk}</td>
+                        <td class="border px-3 py-2 text-center font-mono">${siswa.nisn}</td>
+                        <td class="border px-3 py-2 text-center font-mono font-bold">${jamScan}</td>
+                        <td class="border px-3 py-2 text-center">${status}</td>
+                        <td class="border px-3 py-2 text-center">${keterangan}</td>
+                    </tr>
+                `;
+            });
+        }
+
+        function onScanSuccess(decodedText, decodedResult) {
+            if (isProcessing) return; 
+            isProcessing = true;
+
+            const nisnScanned = decodedText.trim();
+            const siswa = dbSiswa.find(s => s.nisn === nisnScanned || s.induk === nisnScanned);
+
+            if (siswa) {
+                const now = new Date();
+                const jam = now.getHours();
+                const menit = now.getMinutes();
+                const waktuScan = now.toLocaleTimeString('id-ID', { hour12: false });
+                
+                let jenis = "Masuk";
+                let keterangan = "";
+
+                if (jam < 12) {
+                    jenis = "Masuk";
+                    keterangan = (jam < 7 || (jam === 7 && menit === 0)) ? "Tepat Waktu" : "Terlambat";
+                } else {
+                    jenis = "Pulang";
+                    keterangan = (jam === 12 && menit < 15) ? "Pulang Cepat" : "Tepat Waktu";
+                }
+
+                let dataAbsen = getPresensiData();
+                const sudahAbsen = dataAbsen.find(p => p.nisn === siswa.nisn && p.jenis === jenis);
+
+                if (!sudahAbsen) {
+                    dataAbsen.push({
+                        nisn: siswa.nisn,
+                        waktu: waktuScan,
+                        jenis: jenis,
+                        keterangan: keterangan
+                    });
+                    savePresensiData(dataAbsen);
+                    renderTable();
+
+                    // ========================================================
+                    // PENGIRIMAN DATA KE GOOGLE SHEETS
+                    // GANTI URL DI BAWAH INI DENGAN URL WEB APP MILIK ANDA
+                    // ========================================================
+                    const urlScript = "URL_WEB_APP_ANDA_DI_SINI"; 
+                    
+                    fetch(urlScript, {
+                        method: 'POST',
+                        mode: 'no-cors',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            nisn: siswa.nisn,
+                            nama: siswa.nama,
+                            waktu: waktuScan,
+                            jenis: jenis,
+                            keterangan: keterangan
+                        })
+                    }).catch(err => console.error("Koneksi GS error", err));
+                    // ========================================================
+
+                    Swal.fire({
+                        title: 'BERHASIL PRESENSI!',
+                        html: `
+                            <div class="text-left mt-4 border-t pt-4">
+                                <p class="text-sm text-slate-500 uppercase">Selamat Anda Telah Berhasil Presensi</p>
+                                <h3 class="text-2xl font-bold text-teal-600 mt-2">${siswa.nama}</h3>
+                                <p class="text-md mt-1"><b>No Induk:</b> ${siswa.induk}</p>
+                                <p class="text-md"><b>NISN:</b> ${siswa.nisn}</p>
+                                <p class="text-md mt-2"><b>Status:</b> ${jenis} - <span class="${keterangan==='Terlambat'||keterangan==='Pulang Cepat' ? 'text-red-600':'text-green-600'} font-bold">${keterangan}</span></p>
+                                <p class="text-lg font-mono mt-2">${waktuScan}</p>
+                            </div>
+                        `,
+                        icon: 'success',
+                        timer: 4000,
+                        showConfirmButton: false
+                    });
+                    
+                    let audio = new Audio('https://www.soundjay.com/buttons/sounds/button-09.mp3');
+                    audio.play().catch(e => console.log("Audio block by browser"));
+
+                } else {
+                    Swal.fire({
+                        title: 'SUDAH ABSEN',
+                        text: `${siswa.nama} sudah melakukan presensi ${jenis} hari ini.`,
+                        icon: 'info',
+                        timer: 2000,
+                        showConfirmButton: false
+                    });
+                }
+            } else {
+                Swal.fire({
+                    title: 'TIDAK DIKENAL',
+                    text: 'QR Code (NISN) tidak terdaftar di Kelas 4.',
+                    icon: 'error',
+                    timer: 2000,
+                    showConfirmButton: false
+                });
+            }
+
+            setTimeout(() => { isProcessing = false; }, 3000);
+        }
+
+        function onScanFailure(error) {}
+
+        html5QrcodeScanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: {width: 250, height: 250} }, false);
+        html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+
+        renderTable();
+
+        function tabSwitch(tab) {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function bersihkanData() {
+            Swal.fire({
+                title: 'Reset Hari Ini?',
+                text: "Semua data rekapan absen HARI INI akan dihapus dari layar ini.",
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#d33',
+                cancelButtonColor: '#3085d6',
+                confirmButtonText: 'Ya, Hapus!'
+            }).then((result) => {
+                if (result.isConfirmed) {
+                    localStorage.removeItem('presensi_' + getTodayDateStr());
+                    renderTable();
+                    Swal.fire('Terhapus!', 'Data absen hari ini telah di-reset.', 'success');
+                }
+            })
+        }
+    </script>
+</body>
+</html>
