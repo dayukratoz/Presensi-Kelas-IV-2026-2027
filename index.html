@@ -176,10 +176,10 @@
                                 <h3 class="font-bold text-slate-800 flex items-center gap-2">
                                     <i class="fa-solid fa-qrcode text-brand-600"></i> Kamera Scan QR Code
                                 </h3>
-                                <span class="text-xs bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-full font-bold">Aktif</span>
+                                <span id="scanner-status-badge" class="text-xs bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-full font-bold">Aktif & Siap</span>
                             </div>
                             <div id="reader" class="w-full bg-slate-50 rounded-xl overflow-hidden min-h-[220px] border-2 border-dashed border-slate-200"></div>
-                            <p class="text-xs text-slate-500 text-center mt-3"><i class="fa-solid fa-circle-info mr-1"></i> Dekatkan QR Code berisi NISN atau No. Induk ke kamera.</p>
+                            <p class="text-xs text-slate-500 text-center mt-3"><i class="fa-solid fa-circle-info mr-1"></i> Arahkan QR Code (NISN/Induk) 1 siswa secara presisi ke kamera.</p>
                         </div>
 
                         <!-- Manual Input & Quick Attendance Bar -->
@@ -243,7 +243,7 @@
                     </div>
                 </div>
 
-                <!-- VIEW 2: REKAP PRESENSI (WITH FILTER DATE / MONTH / CUSTOM RANGE) -->
+                <!-- VIEW 2: REKAP PRESENSI -->
                 <div id="view-rekap-presensi" class="space-y-6 hidden">
                     <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200">
                         <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5">
@@ -344,7 +344,6 @@
                                     <option value="semua">Semua Tanggal</option>
                                     <option value="harian">Per Hari / Tanggal</option>
                                     <option value="bulanan">Per Bulan</option>
-                                    <option value="rentang">Rentang Tanggal</option>
                                 </select>
                             </div>
                             <div id="nilai-input-date-wrap" class="hidden">
@@ -444,7 +443,7 @@
                         <!-- Kop Surat Resmi -->
                         <div class="text-center border-b-4 border-double border-slate-900 pb-4 mb-6">
                             <h4 class="text-sm font-bold uppercase tracking-widest text-slate-600">Pemerintah Kabupaten Wonosobo</h4>
-                            <h3 class="text-lg font-black uppercase tracking-wider text-slate-900">Dinas Pendidikan Youth dan Olahraga</h3>
+                            <h3 class="text-lg font-black uppercase tracking-wider text-slate-900">Dinas Pendidikan Pemuda dan Olahraga</h3>
                             <h2 class="text-2xl font-black uppercase text-slate-900 tracking-tight">SD NEGERI 2 PULOSAREN</h2>
                             <p class="text-xs text-slate-600 mt-0.5">Kecamatan Kepil, Kabupaten Wonosobo, Jawa Tengah — Kode Pos 56374</p>
                         </div>
@@ -532,7 +531,7 @@
 
     <!-- JAVASCRIPT LOGIC -->
     <script>
-        // DATA MASTER SISWA (23 SISWA KELAS 4)
+        // DATA MASTER SISWA (23 SISWA KELAS 4 SD NEGERI 2 PULOSAREN)
         const dbSiswa = [
             { no: 1, induk: "1443", nisn: "3176387411", nama: "AGUNG PRAWIRA Y." },
             { no: 2, induk: "1444", nisn: "3169066796", nama: "ARKA SURYA PUTRA" },
@@ -577,6 +576,9 @@
         let presensiChartInstance = null;
         let nilaiChartInstance = null;
         let presensiFilterMode = 'harian';
+        
+        // SCANNER LOCK SYSTEM TO PREVENT MULTIPLE UNINTENDED SCANS
+        let isProcessingScan = false;
 
         // INIT APPLICATION
         window.onload = function() {
@@ -622,7 +624,6 @@
             
             // Seed Presensi Dummy if empty
             if (presensiData.length === 0) {
-                // Prepopulate today with 18 Present, 2 Izin, 1 Sakit
                 dbSiswa.forEach((s, idx) => {
                     let status = "Hadir";
                     let jam = "06:55:" + (10 + idx);
@@ -635,7 +636,7 @@
                         tanggal: todayStr,
                         jam: jam,
                         status: status,
-                        keterangan: status === "Hadir" ? "Tepat Waktu" : status
+                        keterangan: status === "Hadir" ? "Scan QR Berhasil" : status
                     });
                 });
                 localStorage.setItem('sdn2_presensi_data', JSON.stringify(presensiData));
@@ -739,7 +740,7 @@
 
             let html = '';
             dbSiswa.forEach(s => {
-                if (s.nama.toLowerCase().includes(query) || s.nisn.includes(query)) {
+                if (s.nama.toLowerCase().includes(query) || s.nisn.includes(query) || s.induk.includes(query)) {
                     const rec = todayRecords.find(p => p.nisn === s.nisn);
                     let badgeClass = "bg-slate-100 text-slate-500";
                     let badgeText = "Belum Absen";
@@ -773,7 +774,7 @@
             const tbody = document.getElementById('table-dashboard-today');
 
             let html = '';
-            dbSiswa.forEach((s, idx) => {
+            dbSiswa.forEach((s) => {
                 const rec = todayRecords.find(p => p.nisn === s.nisn);
                 let jam = rec ? rec.jam : '-';
                 let status = rec ? rec.status : 'Belum Absen';
@@ -800,27 +801,73 @@
             tbody.innerHTML = html;
         }
 
-        // PROCESS ATTENDANCE ENTRY
-        function processAttendance(nisn, statusInput) {
-            const student = dbSiswa.find(s => s.nisn === nisn || s.induk === nisn);
+        // ========================================================
+        // CRITICAL FIX: ACCURATE 1-BARCODE = 1-STUDENT SCANNER LOGIC
+        // ========================================================
+        function initQRScanner() {
+            html5QrcodeScanner = new Html5QrcodeScanner(
+                "reader", 
+                { fps: 10, qrbox: { width: 220, height: 220 } }, 
+                /* verbose= */ false
+            );
+            html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+        }
+
+        function onScanSuccess(decodedText) {
+            // Guard clause to prevent rapid duplicate scans
+            if (isProcessingScan) return;
+            isProcessingScan = true;
+
+            // Pause scanner instance if supported by library UI
+            try {
+                if (html5QrcodeScanner && typeof html5QrcodeScanner.pause === 'function') {
+                    html5QrcodeScanner.pause(true);
+                }
+            } catch(e) {}
+
+            updateScannerBadge(false);
+
+            const rawCode = decodedText ? decodedText.toString().trim() : '';
+            processScanResult(rawCode);
+        }
+
+        function onScanFailure(error) {
+            // Silence normal frame failures while waiting for QR
+        }
+
+        function processScanResult(scannedText) {
+            const cleanInput = scannedText.trim();
+            
+            // STRICT EXACT EQUALITY MATCH ONLY (Matches NISN OR No. Induk)
+            const student = dbSiswa.find(s => s.nisn === cleanInput || s.induk === cleanInput);
+
             if (!student) {
-                Swal.fire({ icon: 'error', title: 'Tidak Ditemukan', text: 'Siswa dengan QR/NISN ini tidak terdaftar di Kelas 4.' });
+                playErrorSound();
+                Swal.fire({
+                    icon: 'error',
+                    title: 'QR Code Tidak Dikenal',
+                    html: `Kode <code class="bg-rose-50 px-2 py-1 rounded text-rose-600 font-mono font-bold">${cleanInput}</code> tidak terdaftar pada database Siswa Kelas 4 SD Negeri 2 Pulosaren.`,
+                    confirmButtonText: 'Scan Ulang',
+                    confirmButtonColor: '#0d9488'
+                }).then(() => {
+                    unlockScanner();
+                });
                 return;
             }
 
+            // Process exact single student attendance
             const todayStr = getTodayDateStr();
             const now = new Date();
             const jamStr = now.toLocaleTimeString('id-ID', { hour12: false });
 
-            // Check if already present today
             const existingIdx = presensiData.findIndex(p => p.nisn === student.nisn && p.tanggal === todayStr);
 
             const newRecord = {
                 nisn: student.nisn,
                 tanggal: todayStr,
                 jam: jamStr,
-                status: statusInput || 'Hadir',
-                keterangan: statusInput === 'Hadir' ? 'Scan QR Berhasil' : statusInput
+                status: 'Hadir',
+                keterangan: 'Tepat Waktu (Scan QR)'
             };
 
             if (existingIdx !== -1) {
@@ -830,15 +877,101 @@
             }
 
             localStorage.setItem('sdn2_presensi_data', JSON.stringify(presensiData));
-            
-            // Audio Feedback Synthesis
+            playBeepSound();
+
+            renderDashboardToday();
+            renderSidebar();
+
+            Swal.fire({
+                icon: 'success',
+                title: 'PRESENSI BERHASIL!',
+                html: `
+                    <div class="text-left mt-3 pt-3 border-t border-slate-200">
+                        <span class="text-xs text-slate-500 uppercase font-bold tracking-wider">Detail Peserta Didik:</span>
+                        <h3 class="text-xl font-extrabold text-teal-700 mt-1">${student.nama}</h3>
+                        <div class="grid grid-cols-2 gap-2 mt-3 text-xs bg-slate-50 p-3 rounded-xl border border-slate-200">
+                            <div><span class="text-slate-500">No. Induk:</span> <br><strong class="font-mono text-slate-800">${student.induk}</strong></div>
+                            <div><span class="text-slate-500">NISN:</span> <br><strong class="font-mono text-slate-800">${student.nisn}</strong></div>
+                            <div><span class="text-slate-500">Waktu Scan:</span> <br><strong class="font-mono text-teal-600">${jamStr}</strong></div>
+                            <div><span class="text-slate-500">Status:</span> <br><strong class="text-emerald-600 uppercase font-bold">Hadir</strong></div>
+                        </div>
+                    </div>
+                `,
+                confirmButtonText: 'Lanjut Scan Siswa Lain',
+                confirmButtonColor: '#0d9488',
+                timer: 3500,
+                timerProgressBar: true
+            }).then(() => {
+                unlockScanner();
+            });
+        }
+
+        function unlockScanner() {
+            try {
+                if (html5QrcodeScanner && typeof html5QrcodeScanner.resume === 'function') {
+                    html5QrcodeScanner.resume();
+                }
+            } catch(e) {}
+
+            updateScannerBadge(true);
+
+            // Mandatory 1.2s Cooldown lock to ensure no accidental double triggers
+            setTimeout(() => {
+                isProcessingScan = false;
+            }, 1200);
+        }
+
+        function updateScannerBadge(isReady) {
+            const badge = document.getElementById('scanner-status-badge');
+            if (badge) {
+                if (isReady) {
+                    badge.className = "text-xs bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-full font-bold";
+                    badge.innerText = "Aktif & Siap";
+                } else {
+                    badge.className = "text-xs bg-amber-100 text-amber-700 px-2.5 py-1 rounded-full font-bold";
+                    badge.innerText = "Memproses...";
+                }
+            }
+        }
+
+        function submitManualAttendance(status) {
+            const nisn = document.getElementById('manual-student-select').value;
+            if (!nisn) {
+                Swal.fire({ icon: 'warning', title: 'Pilih Siswa', text: 'Silakan pilih nama siswa terlebih dahulu!' });
+                return;
+            }
+
+            const student = dbSiswa.find(s => s.nisn === nisn);
+            if (!student) return;
+
+            const todayStr = getTodayDateStr();
+            const now = new Date();
+            const jamStr = now.toLocaleTimeString('id-ID', { hour12: false });
+
+            const existingIdx = presensiData.findIndex(p => p.nisn === student.nisn && p.tanggal === todayStr);
+
+            const newRecord = {
+                nisn: student.nisn,
+                tanggal: todayStr,
+                jam: jamStr,
+                status: status,
+                keterangan: 'Input Manual (' + status + ')'
+            };
+
+            if (existingIdx !== -1) {
+                presensiData[existingIdx] = newRecord;
+            } else {
+                presensiData.push(newRecord);
+            }
+
+            localStorage.setItem('sdn2_presensi_data', JSON.stringify(presensiData));
             playBeepSound();
 
             Swal.fire({
                 icon: 'success',
-                title: 'Presensi Berhasil!',
-                html: `<strong>${student.nama}</strong><br>Status: <span class="text-emerald-600 font-bold">${newRecord.status}</span> (${jamStr})`,
-                timer: 2000,
+                title: 'Presensi Disimpan!',
+                html: `<strong>${student.nama}</strong><br>Status: <span class="font-bold uppercase ${status==='Hadir'?'text-emerald-600':status==='Izin'?'text-sky-600':status==='Sakit'?'text-amber-600':'text-rose-600'}">${status}</span>`,
+                timer: 1800,
                 showConfirmButton: false
             });
 
@@ -846,19 +979,10 @@
             renderSidebar();
         }
 
-        function submitManualAttendance(status) {
-            const nisn = document.getElementById('manual-student-select').value;
-            if (!nisn) {
-                Swal.fire({ icon: 'warning', title: 'Pilih Siswa', text: 'Silakan pilih siswa terlebih dahulu!' });
-                return;
-            }
-            processAttendance(nisn, status);
-        }
-
         function resetTodayAttendance() {
             Swal.fire({
                 title: 'Reset Presensi Hari Ini?',
-                text: 'Data presensi hari ini akan dihapus dari sistem.',
+                text: 'Semua data presensi hari ini akan dihapus dari sistem.',
                 icon: 'warning',
                 showCancelButton: true,
                 confirmButtonColor: '#e11d48',
@@ -875,34 +999,38 @@
             });
         }
 
+        // AUDIO SOUND FEEDBACK (WEB AUDIO API SYNTHESIS)
         function playBeepSound() {
             try {
                 const ctx = new (window.AudioContext || window.webkitAudioContext)();
                 const osc = ctx.createOscillator();
                 const gain = ctx.createGain();
                 osc.type = 'sine';
-                osc.frequency.setValueAtTime(800, ctx.currentTime);
+                osc.frequency.setValueAtTime(880, ctx.currentTime);
                 gain.gain.setValueAtTime(0.2, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25);
                 osc.connect(gain);
                 gain.connect(ctx.destination);
                 osc.start();
-                osc.stop(ctx.currentTime + 0.15);
-            } catch (e) {
-                console.log("Audio not supported or blocked");
-            }
+                osc.stop(ctx.currentTime + 0.25);
+            } catch (e) {}
         }
 
-        // QR SCANNER INITIALIZATION
-        function initQRScanner() {
-            html5QrcodeScanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: { width: 220, height: 220 } }, false);
-            html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+        function playErrorSound() {
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(220, ctx.currentTime);
+                gain.gain.setValueAtTime(0.2, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.35);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start();
+                osc.stop(ctx.currentTime + 0.35);
+            } catch (e) {}
         }
-
-        function onScanSuccess(decodedText) {
-            processAttendance(decodedText.trim(), 'Hadir');
-        }
-
-        function onScanFailure(error) {}
 
         // REKAP PRESENSI LOGIC
         function initDateFilterDefaults() {
@@ -959,7 +1087,7 @@
                 filteredRecords = presensiData.filter(p => p.tanggal === targetDate);
                 summaryText = `Tanggal: ${targetDate}`;
             } else if (presensiFilterMode === 'bulanan') {
-                const targetMonth = document.getElementById('pres-filter-month').value; // YYYY-MM
+                const targetMonth = document.getElementById('pres-filter-month').value;
                 filteredRecords = presensiData.filter(p => p.tanggal.startsWith(targetMonth));
                 summaryText = `Bulan: ${targetMonth}`;
             } else {
@@ -1001,8 +1129,6 @@
             });
 
             tbody.innerHTML = html;
-
-            // Render Chart
             renderPresensiChart(totalHadir, totalIzin, totalSakit, totalAlpa);
         }
 
@@ -1131,7 +1257,6 @@
 
             tbody.innerHTML = html;
 
-            // Render Chart Avg per Mapel
             const mapelAverages = mapels.map(m => {
                 const mData = filtered.filter(n => n.mapel === m);
                 return mData.length > 0 ? Math.round(mData.reduce((a, b) => a + b.nilai, 0) / mData.length) : 0;
